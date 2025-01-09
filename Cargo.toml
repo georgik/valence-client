@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytes = "1.9.0"
+bytes = { version = "1.9.0", default-features = false }
 #uuid = { version = "1.11.0", features = ["v4"] }
 valence_protocol = { path = "../valence/crates/valence_protocol" }
 #futures-util = "0.3.28" # For future combinators
