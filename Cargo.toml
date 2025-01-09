@@ -5,6 +5,62 @@ edition = "2021"
 
 [dependencies]
 bytes = "1.9.0"
-tokio = "1.43.0"
-uuid = { version = "1.11.0", features = ["v4"] }
-valence = { path = "../valence" }
+#uuid = { version = "1.11.0", features = ["v4"] }
+valence_protocol = { path = "../valence/crates/valence_protocol" }
+#futures-util = "0.3.28" # For future combinators
+
+esp-backtrace = { version = "0.14.2", features = [
+    "esp32c6",
+    "exception-handler",
+    "panic-handler",
+    "defmt",
+]}
+
+esp-hal = { version = "0.22.0", features = [
+    "esp32c6",
+    "defmt",
+] }
+esp-alloc = { version = "0.5.0" }
+embedded-time       = "=0.12.1"
+
+esp-wifi = { version = "0.11.0", default-features=false, features = [
+    "esp32c6",
+    "utils",
+    "wifi",
+    "esp-alloc",
+    "defmt",
+] }
+heapless = { version = "0.8.0", default-features = false }
+smoltcp             = { version = "0.12.0", default-features = false, features = [ "medium-ethernet", "socket-raw"] }
+defmt            = "0.3.8"
+defmt-rtt        = "0.4.1"
+esp-hal-embassy  = { version = "0.5.0",  features = ["esp32c6"] }
+static_cell      = { version = "2.1.0",  features = ["nightly"] }
+critical-section = "1.2.0"
+
+embassy-executor    = { version = "0.6.0", features = ["task-arena-size-20480"] }
+embassy-futures     = "0.1.1"
+embassy-net = { version = "0.5.0", features = [ "tcp", "udp", "dhcpv4", "medium-ethernet"] }
+embassy-sync        = "0.6.0"
+embassy-time        = "0.3.2"
+#embassy-usb         = { version = "0.2.0", default-features = false }
+embedded-can        = "0.4.1"
+embedded-hal-async  = "1.0.0"
+embedded-io         = { version = "0.6.1", default-features = false }
+embedded-io-async   = "0.6.1"
+embedded-storage    = "0.3.1"
+serde = { version = "1.0.217", features = ["derive", "alloc"] }
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
