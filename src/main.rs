@@ -7,7 +7,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use bytes::Buf;
-use defmt::{info, warn, error};
+use defmt::{info, warn, error, println};
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Stack, StackResources};
@@ -45,10 +45,18 @@ async fn main(spawner: Spawner) {
     esp_hal_embassy::init(timer0.alarm0);
 
 
-    info!("System initialized!");
+    println!("System initialized!");
 
     // Initialize the timer and Wi-Fi
-    let timer_group = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
+    let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
+    let _init = esp_wifi::init(
+        timer1.timer0,
+        esp_hal::rng::Rng::new(peripherals.RNG),
+        peripherals.RADIO_CLK,
+    )
+        .unwrap();
+
+    println!("Wi-Fi initialized!");
     // let wifi = esp_wifi::init(
     //     timer_group.timer0,
     //     esp_hal::rng::Rng::new(peripherals.RNG),
