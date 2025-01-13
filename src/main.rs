@@ -215,7 +215,9 @@ async fn login_and_handle_updates(
     };
 
     enc.append_packet(&login_start_packet).expect("Failed to encode LoginHelloC2s packet");
-    socket.write_all(&enc.take()).await.map_err(|_| ())?;
+    let data = enc.take();
+    println!("Login start packet: {:?}", data);
+    socket.write_all(&data).await.map_err(|_| ())?;
     println!("Login request sent.");
 
     let mut buf = [0u8; 4096];
@@ -232,14 +234,23 @@ async fn login_and_handle_updates(
                 valence_protocol::packets::login::LoginCompressionS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginCompressionS2c =
                         frame.decode().expect("Failed to decode LoginCompressionS2c");
-                    println!("Compression threshold: {}", packet.threshold.0);
+                    println!("Compression threshold received: {}", packet.threshold.0);
                     // dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
                 }
                 valence_protocol::packets::login::LoginSuccessS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginSuccessS2c =
                         frame.decode().expect("Failed to decode LoginSuccessS2c");
-                    println!("Login successful! Username: {}, UUID: {}", packet.username, packet.uuid);
-                    return Ok(());
+                    println!(
+                        "Login successful! Username: {}, UUID: {}",
+                        packet.username, packet.uuid
+                    );
+                    return Ok(()); // Exit loop after successful login
+                }
+                valence_protocol::packets::login::LoginDisconnectS2c::ID => {
+                    let packet: valence_protocol::packets::login::LoginDisconnectS2c =
+                        frame.decode().expect("Failed to decode LoginDisconnectS2c");
+                    println!("Disconnected by server: {}", packet.reason);
+                    return Err(()); // Exit loop after disconnect
                 }
                 _ => println!("Unhandled packet ID during login: {}", frame.id),
             }
