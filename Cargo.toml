@@ -44,7 +44,7 @@ smoltcp = { version = "0.11.0", default-features = false, features = [
 ] }
 defmt            = "0.3.8"
 defmt-rtt        = "0.4.1"
-esp-hal-embassy  = { version = "0.5.0",  features = ["esp32c6"] }
+esp-hal-embassy  = { version = "0.5.0",  features = ["esp32c6", "integrated-timers"] }
 static_cell      = { version = "2.1.0",  features = ["nightly"] }
 critical-section = "1.2.0"
 
@@ -60,7 +60,7 @@ embedded-io         = { version = "0.6.1", default-features = false }
 embedded-io-async   = "0.6.1"
 embedded-storage    = "0.3.1"
 cfg-if = "1.0.0"
-esp-println = { version = "0.12.0", features = ["esp32c6"] }
+esp-println = { version = "0.12.0", features = ["esp32c6", "log"] }
 
 [profile.dev]
 # Rust debug is too slow.
