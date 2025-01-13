@@ -158,18 +158,27 @@ async fn run_client(mut socket: TcpSocket<'_>) -> Result<(), ()> {
     let mut dec = PacketDecoder::new();
     let mut enc = PacketEncoder::new();
 
-    if let Err(e) = send_handshake(&mut socket, &mut enc).await {
+    // Step 1: Send Handshake
+    if let Err(e) = send_handshake(
+        &mut socket,
+        &mut enc,
+        valence_protocol::packets::handshaking::handshake_c2s::HandshakeNextState::Login,
+    )
+        .await
+    {
         println!("Handshake failed: {:?}", e);
         return Err(());
     }
 
-    // if let Err(e) = login_and_handle_updates(&socket, &mut dec, &mut enc).await {
-    //     println!("Login failed: {:?}", e);
-    //     return Err(());
-    // }
+    // Step 2: Login and handle updates
+    if let Err(e) = login_and_handle_updates(&mut socket, &mut dec, &mut enc).await {
+        println!("Login failed: {:?}", e);
+        return Err(());
+    }
 
     Ok(())
 }
+
 
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
@@ -177,22 +186,23 @@ async fn net_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>
 
 }
 
-async fn send_handshake(socket: &mut TcpSocket<'_>, enc: &mut PacketEncoder) -> Result<(), ()> {
+async fn send_handshake(
+    socket: &mut TcpSocket<'_>,
+    enc: &mut PacketEncoder,
+    next_state: valence_protocol::packets::handshaking::handshake_c2s::HandshakeNextState,
+) -> Result<(), ()> {
     let handshake_packet = valence_protocol::packets::handshaking::handshake_c2s::HandshakeC2s {
-        protocol_version: VarInt(763),
+        protocol_version: VarInt(763), // Protocol version for Minecraft 1.20
         server_address: valence_protocol::Bounded("192.168.33.211"),
         server_port: 25565,
-        next_state: valence_protocol::packets::handshaking::handshake_c2s::HandshakeNextState::Login,
+        next_state,
     };
 
-    enc.append_packet(&handshake_packet)
-        .expect("Failed to encode handshake packet");
-    socket.write(&enc.take()).await.map_err(|_| ())?; // Use mutable socket reference
-    println!("Handshake sent!");
+    enc.append_packet(&handshake_packet).expect("Failed to encode handshake packet");
+    socket.write(&enc.take()).await.map_err(|_| ())?;
+    println!("Handshake sent with next state: {:?}", next_state);
     Ok(())
 }
-
-
 
 async fn login_and_handle_updates(
     socket: &mut TcpSocket<'_>,
@@ -200,11 +210,11 @@ async fn login_and_handle_updates(
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
-        username: valence_protocol::Bounded("test"),
-        profile_id: None,
+        username: valence_protocol::Bounded("Player"), // Replace with your username
+        profile_id: None, // Optional in offline mode
     };
 
-    enc.append_packet(&login_start_packet).expect("Failed to encode login packet");
+    enc.append_packet(&login_start_packet).expect("Failed to encode LoginHelloC2s packet");
     socket.write_all(&enc.take()).await.map_err(|_| ())?;
     println!("Login request sent.");
 
@@ -221,15 +231,17 @@ async fn login_and_handle_updates(
             match frame.id {
                 valence_protocol::packets::login::LoginCompressionS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginCompressionS2c =
-                        frame.decode().expect("Failed to decode packet");
+                        frame.decode().expect("Failed to decode LoginCompressionS2c");
+                    println!("Compression threshold: {}", packet.threshold.0);
                     // dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
                 }
                 valence_protocol::packets::login::LoginSuccessS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginSuccessS2c =
-                        frame.decode().expect("Failed to decode packet");
-                    println!("Login successful: {}", packet.username);
+                        frame.decode().expect("Failed to decode LoginSuccessS2c");
+                    println!("Login successful! Username: {}, UUID: {}", packet.username, packet.uuid);
+                    return Ok(());
                 }
-                _ => println!("Unhandled packet ID: {}", frame.id),
+                _ => println!("Unhandled packet ID during login: {}", frame.id),
             }
         }
     }
