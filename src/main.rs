@@ -154,11 +154,11 @@ async fn connection(mut controller: WifiController<'static>) {
     }
 }
 
-async fn run_client(socket: TcpSocket<'_>) -> Result<(), ()> {
+async fn run_client(mut socket: TcpSocket<'_>) -> Result<(), ()> {
     let mut dec = PacketDecoder::new();
     let mut enc = PacketEncoder::new();
 
-    if let Err(e) = send_handshake(&socket, &mut enc).await {
+    if let Err(e) = send_handshake(&mut socket, &mut enc).await {
         println!("Handshake failed: {:?}", e);
         return Err(());
     }
@@ -170,26 +170,28 @@ async fn run_client(socket: TcpSocket<'_>) -> Result<(), ()> {
 
     Ok(())
 }
+
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
     runner.run().await;
 
 }
 
-async fn send_handshake(socket: &TcpSocket<'_>, enc: &mut PacketEncoder) -> Result<(), ()> {
+async fn send_handshake(socket: &mut TcpSocket<'_>, enc: &mut PacketEncoder) -> Result<(), ()> {
     let handshake_packet = valence_protocol::packets::handshaking::handshake_c2s::HandshakeC2s {
         protocol_version: VarInt(763),
-        server_address: valence_protocol::Bounded("127.0.0.1"),
+        server_address: valence_protocol::Bounded("192.168.33.211"),
         server_port: 25565,
         next_state: valence_protocol::packets::handshaking::handshake_c2s::HandshakeNextState::Login,
     };
 
     enc.append_packet(&handshake_packet)
         .expect("Failed to encode handshake packet");
-    // socket.write(&enc.take()).await.map_err(|_| ())?;
+    socket.write(&enc.take()).await.map_err(|_| ())?; // Use mutable socket reference
     println!("Handshake sent!");
     Ok(())
 }
+
 
 
 async fn login_and_handle_updates(
