@@ -1,6 +1,7 @@
 # ESP32-S3
 [target.xtensa-esp32s3-none-elf]
-runner = "probe-rs run --chip=esp32s3"
+#runner = "probe-rs run --chip=esp32s3"
+runner = "espflash flash --monitor"
 
 # ESP32-C3
 [target.riscv32imc-unknown-none-elf]

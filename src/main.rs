@@ -1,8 +1,27 @@
 #![no_std]
 #![no_main]
+use esp_hal::gpio::Level;
+use esp_hal::gpio::Output;
+use esp_hal::dma::DmaPriority;
+use esp_hal::dma::Dma;
+use esp_hal::spi::master::Spi;
 use defmt_rtt as _;
 use heapless::String;
 use core::net::Ipv4Addr;
+use defmt::info;
+use embedded_hal::delay::DelayNs;
+
+use esp_bsp::prelude::*;
+use esp_display_interface_spi_dma::display_interface_spi_dma;
+
+use embedded_graphics::{
+    mono_font::{ascii::FONT_8X13, MonoTextStyle},
+    prelude::{Point, RgbColor},
+    text::Text,
+    Drawable,
+};
+
+use esp_hal::prelude::*;
 
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Runner, StackResources};
@@ -10,7 +29,7 @@ use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_backtrace as _;
-use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup, delay::Delay,};
 use esp_println::println;
 use esp_wifi::{
     init,
@@ -49,6 +68,35 @@ async fn main(spawner: Spawner) {
         EspWifiController<'static>,
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
+
+    #[cfg(not(feature = "no-psram"))]
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    #[cfg(feature = "no-psram")]
+    esp_alloc::heap_allocator!(280 * 1024);
+
+    let spi = lcd_spi!(peripherals);
+
+    info!("SPI ready");
+
+    // Use the `lcd_display_interface` macro to create the display interface
+    let di = lcd_display_interface!(peripherals, spi);
+
+    let mut delay = Delay::new();
+    delay.delay_ns(500_000u32);
+
+    let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
+
+    // Use the `lcd_backlight_init` macro to turn on the backlight
+    lcd_backlight_init!(peripherals);
+
+
+    Text::new(
+        "Initializing...",
+        Point::new(80, 110),
+        MonoTextStyle::new(&FONT_8X13, RgbColor::WHITE),
+    )
+        .draw(&mut display)
+        .unwrap();
 
     let wifi = peripherals.WIFI;
     let (wifi_interface, controller) =
@@ -213,7 +261,7 @@ async fn login_and_handle_updates(
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
-        username: valence_protocol::Bounded("ESP32-C6"), // Replace with your username
+        username: valence_protocol::Bounded("ESP32-S3"), // Replace with your username
         profile_id: None, // Optional in offline mode
     };
 
@@ -247,15 +295,51 @@ async fn login_and_handle_updates(
                         "Login successful! Username: {}, UUID: {}",
                         packet.username, packet.uuid
                     );
-                    return Ok(()); // Exit loop after successful login
                 }
-                valence_protocol::packets::login::LoginDisconnectS2c::ID => {
-                    let packet: valence_protocol::packets::login::LoginDisconnectS2c =
-                        frame.decode().expect("Failed to decode LoginDisconnectS2c");
+                valence_protocol::packets::play::GameJoinS2c::ID => {
+                    let packet: valence_protocol::packets::play::GameJoinS2c =
+                        frame.decode().expect("Failed to decode GameJoinS2c");
+                    println!("Joined the game world with Entity ID: {}", packet.entity_id);
+                }
+                valence_protocol::packets::play::PlayerPositionLookS2c::ID => {
+                    let packet: valence_protocol::packets::play::PlayerPositionLookS2c =
+                        frame.decode().expect("Failed to decode PlayerPositionLookS2c");
+                    println!(
+                        "Player position updated: x={}, y={}, z={}, yaw={}, pitch={}",
+                        packet.position.x, packet.position.y, packet.position.z, packet.yaw, packet.pitch
+                    );
+                }
+                valence_protocol::packets::play::KeepAliveS2c::ID => {
+                    let packet: valence_protocol::packets::play::KeepAliveS2c =
+                        frame.decode().expect("Failed to decode KeepAliveS2c");
+                    println!("KeepAlive received with ID: {}", packet.id);
+                    enc.append_packet(&valence_protocol::packets::play::KeepAliveC2s { id: packet.id })
+                        .expect("Failed to encode KeepAliveC2s");
+                    socket.write_all(&enc.take()).await.map_err(|_| ())?;
+                }
+                valence_protocol::packets::play::ChatMessageS2c::ID => {
+                    let packet: valence_protocol::packets::play::ChatMessageS2c =
+                        frame.decode().expect("Failed to decode ChatMessageS2c");
+                    println!("Chat message: {}", packet.message);
+                }
+                valence_protocol::packets::play::DisconnectS2c::ID => {
+                    let packet: valence_protocol::packets::play::DisconnectS2c =
+                        frame.decode().expect("Failed to decode DisconnectS2c");
                     println!("Disconnected by server: {}", packet.reason);
                     return Err(()); // Exit loop after disconnect
                 }
-                _ => println!("Unhandled packet ID during login: {}", frame.id),
+                valence_protocol::packets::play::HealthUpdateS2c::ID => {
+                    let packet: valence_protocol::packets::play::HealthUpdateS2c =
+                        frame.decode().expect("Failed to decode HealthUpdateS2c");
+                    println!(
+                        "Health Update: health={}, saturation={}",
+                        packet.health, packet.food_saturation
+                    );
+                }
+                valence_protocol::packets::play::ChunkDataS2c::ID => {
+                    println!("Received chunk data.");
+                }
+                _ => println!("Unhandled packet ID during login/update: {}", frame.id),
             }
         }
     }
