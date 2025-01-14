@@ -28,6 +28,8 @@ macro_rules! mk_static {
 
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
+const SERVER_IP: &str = env!("SERVER_IP");
+
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -63,6 +65,7 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    let server_ip: Ipv4Addr = SERVER_IP.parse().expect("Invalid SERVER_IP address");
     let config = embassy_net::Config::dhcpv4(Default::default());
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
@@ -95,7 +98,7 @@ async fn main(spawner: Spawner) {
             let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
             // Connect to the server
-            let remote_endpoint = (Ipv4Addr::new(192, 168, 33, 211), 25565);
+            let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25565);
             if let Err(e) = socket.connect(remote_endpoint).await {
                 println!("Failed to connect to server: {:?}", e);
                 return;
@@ -193,7 +196,7 @@ async fn send_handshake(
 ) -> Result<(), ()> {
     let handshake_packet = valence_protocol::packets::handshaking::handshake_c2s::HandshakeC2s {
         protocol_version: VarInt(763), // Protocol version for Minecraft 1.20
-        server_address: valence_protocol::Bounded("192.168.33.211"),
+        server_address: valence_protocol::Bounded(SERVER_IP),
         server_port: 25565,
         next_state,
     };
