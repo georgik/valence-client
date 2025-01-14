@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+extern crate alloc;
 use esp_hal::gpio::Level;
 use esp_hal::gpio::Output;
 use esp_hal::dma::DmaPriority;
@@ -10,7 +11,8 @@ use heapless::String;
 use core::net::Ipv4Addr;
 use defmt::info;
 use embedded_hal::delay::DelayNs;
-
+use alloc::vec::Vec;
+use crate::alloc::string::ToString;
 use esp_bsp::prelude::*;
 use esp_display_interface_spi_dma::display_interface_spi_dma;
 
@@ -48,6 +50,98 @@ macro_rules! mk_static {
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
 const SERVER_IP: &str = env!("SERVER_IP");
+
+
+// Graphical logging
+use core::fmt::Write as FmtWrite;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::Size;
+use embedded_graphics::primitives::Rectangle;
+
+const LOG_CAPACITY: usize = 1024; // Total characters for logging
+const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
+const SCREEN_HEIGHT: u32 = 240; // Adjust based on your display
+const LINE_HEIGHT: u32 = 14; // Line height for the chosen font
+
+pub struct Logger<'a, D>
+where
+    D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
+{
+    buffer: String<LOG_CAPACITY>, // Logging buffer
+    display: &'a mut D,           // Reference to the display
+    text_style: MonoTextStyle<'static, Rgb565>, // Text style
+    scroll_offset: usize,         // Offset for scrolling
+}
+
+impl<'a, D> Logger<'a, D>
+where
+    D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
+{
+    pub fn new(display: &'a mut D) -> Self {
+        Self {
+            buffer: String::new(),
+            display,
+            text_style: MonoTextStyle::new(&FONT_8X13, Rgb565::WHITE),
+            scroll_offset: 0,
+        }
+    }
+
+    /// Log a message to the buffer and display it.
+    pub fn log(&mut self, message: &str) {
+        println!("{}", message);
+        // Add message to the buffer
+        writeln!(self.buffer, "{}", message).ok();
+
+        if self.buffer.len() > LOG_CAPACITY {
+            let excess = self.buffer.len() - LOG_CAPACITY;
+
+            // Create a temporary copy of the truncated string
+            let truncated = &self.buffer[excess..].to_string();
+
+            self.buffer.clear();
+            self.buffer.push_str(truncated).unwrap(); // Push the truncated portion back into the buffer
+        }
+
+        self.render();
+    }
+
+    /// Render the log to the display.
+    fn render(&mut self) {
+        // Clear the screen
+        self.display
+            .fill_solid(
+                &Rectangle::new(
+                    Point::new(0, 0),
+                    Size::new(SCREEN_WIDTH, SCREEN_HEIGHT),
+                ),
+                Rgb565::BLACK,
+            )
+            .ok();
+
+
+        // Split the buffer into lines
+        let lines: Vec<&str> = self
+            .buffer
+            .lines()
+            .skip(self.scroll_offset)
+            .collect();
+
+        // Draw each visible line
+        for (i, line) in lines.iter().take((SCREEN_HEIGHT / LINE_HEIGHT) as usize).enumerate() {
+            Text::new(line, Point::new(0, (i as u32 * LINE_HEIGHT) as i32), self.text_style)
+                .draw(self.display)
+                .ok();
+        }
+    }
+
+    /// Scroll the log up or down.
+    pub fn scroll(&mut self, direction: i32) {
+        self.scroll_offset = (self.scroll_offset as i32 + direction)
+            .max(0)
+            .min(self.buffer.lines().count() as i32 - 1) as usize;
+        self.render();
+    }
+}
 
 
 #[esp_hal_embassy::main]
@@ -89,14 +183,16 @@ async fn main(spawner: Spawner) {
     // Use the `lcd_backlight_init` macro to turn on the backlight
     lcd_backlight_init!(peripherals);
 
+    let mut logger = Logger::new(&mut display);
+    // Text::new(
+    //     "Initializing...",
+    //     Point::new(80, 110),
+    //     MonoTextStyle::new(&FONT_8X13, RgbColor::WHITE),
+    // )
+    //     .draw(&mut display)
+    //     .unwrap();
+    logger.log("Initializing...");
 
-    Text::new(
-        "Initializing...",
-        Point::new(80, 110),
-        MonoTextStyle::new(&FONT_8X13, RgbColor::WHITE),
-    )
-        .draw(&mut display)
-        .unwrap();
 
     let wifi = peripherals.WIFI;
     let (wifi_interface, controller) =
@@ -134,7 +230,7 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(500)).await;
     }
 
-    println!("Waiting to get IP address...");
+    logger.log("Waiting to get IP address...");
     loop {
         if let Some(config) = stack.config_v4() {
             println!("Got IP: {}", config.address);
