@@ -213,7 +213,7 @@ async fn login_and_handle_updates(
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
-        username: valence_protocol::Bounded("Player"), // Replace with your username
+        username: valence_protocol::Bounded("ESP32-C6"), // Replace with your username
         profile_id: None, // Optional in offline mode
     };
 
