@@ -1,3 +1,13 @@
+# ESP32-S3
+[target.xtensa-esp32s3-none-elf]
+runner = "probe-rs run --chip=esp32s3"
+
+# ESP32-C3
+[target.riscv32imc-unknown-none-elf]
+#runner = "probe-rs run --chip=esp32c6"
+runner = "espflash flash --monitor"
+
+# ESP32-C6
 [target.riscv32imac-unknown-none-elf]
 #runner = "probe-rs run --chip=esp32c6"
 runner = "espflash flash --monitor"
@@ -6,8 +16,12 @@ runner = "espflash flash --monitor"
 DEFMT_LOG="info"
 
 [build]
-
-target = "riscv32imac-unknown-none-elf"
+# ESP32-S3
+target = "xtensa-esp32s3-none-elf"
+# ESP32-C3
+#target = "riscv32imc-unknown-none-elf"
+# ESP32-C6
+#target = "riscv32imac-unknown-none-elf"
 
 [unstable]
 build-std = ["alloc", "core"]
