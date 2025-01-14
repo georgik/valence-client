@@ -248,6 +248,8 @@ async fn main(spawner: Spawner) {
                 return;
             }
             println!("Connected to server at {}:{}", remote_endpoint.0, remote_endpoint.1);
+            logger.log("Connected to server!");
+            logger.log(&*remote_endpoint.0.to_string());
 
             // Pass the socket to run_client
             if let Err(e) = run_client(socket).await {
