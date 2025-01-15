@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 bytes = { path = "../bytes", default-features = false }
 #uuid = { version = "1.11.0", features = ["v4"] }
-valence_protocol = { path = "../valence/crates/valence_protocol" }
+valence_protocol = { path = "../valence/crates/valence_protocol", features = ["compression"] }
 #futures-util = "0.3.28" # For future combinators
 
 esp-backtrace = { version = "0.14.2", features = [

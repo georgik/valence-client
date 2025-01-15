@@ -32,7 +32,7 @@ use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup, delay::Delay,};
-use esp_println::println;
+use esp_println::{print, println};
 use esp_wifi::{
     init,
     wifi::{ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent, WifiStaDevice, WifiState},
@@ -150,14 +150,25 @@ where
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
-    esp_println::logger::init_logger_from_env();
+    print!("System starting up...");
     let peripherals = esp_hal::init({
         let mut config = esp_hal::Config::default();
         config.cpu_clock = CpuClock::max();
         config
     });
+    println!(" ok");
 
-    esp_alloc::heap_allocator!(72 * 1024);
+    esp_println::logger::init_logger_from_env();
+
+    // print!("PSRAM...");
+    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    // println!(" ok");
+
+    const memory_size: usize = 160 * 1024;
+    print!("Initializing allocator with {} bytes...", memory_size);
+    esp_alloc::heap_allocator!(memory_size);
+    println!(" ok");
+
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let mut rng = Rng::new(peripherals.RNG);
@@ -167,10 +178,6 @@ async fn main(spawner: Spawner) {
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
 
-    #[cfg(not(feature = "no-psram"))]
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-    #[cfg(feature = "no-psram")]
-    esp_alloc::heap_allocator!(280 * 1024);
 
     let spi = lcd_spi!(peripherals);
 
@@ -383,16 +390,16 @@ async fn login_and_handle_updates(
 
         dec.queue_bytes((&buf[..bytes_read]).into());
         while let Ok(Some(frame)) = dec.try_next_packet() {
+            println!("Received packet ID: {}", frame.id);
             match frame.id {
-                valence_protocol::packets::login::LoginCompressionS2c::ID => {
+                LoginCompressionS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginCompressionS2c =
                         frame.decode().expect("Failed to decode LoginCompressionS2c");
                     println!("Compression threshold received: {}", packet.threshold.0);
-                    println!("Compression is not supported by the client.");
-                    // dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
+                    dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
                 }
-                valence_protocol::packets::login::LoginSuccessS2c::ID => {
-                    let packet: valence_protocol::packets::login::LoginSuccessS2c =
+                LoginSuccessS2c::ID => {
+                    let packet: LoginSuccessS2c =
                         frame.decode().expect("Failed to decode LoginSuccessS2c");
                     println!(
                         "Login successful! Username: {}, UUID: {}",
