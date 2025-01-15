@@ -39,6 +39,10 @@ use esp_wifi::{
     EspWifiController,
 };
 use valence_protocol::{Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
+use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginCompressionS2c};
+use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c};
+use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
+
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -384,6 +388,7 @@ async fn login_and_handle_updates(
                     let packet: valence_protocol::packets::login::LoginCompressionS2c =
                         frame.decode().expect("Failed to decode LoginCompressionS2c");
                     println!("Compression threshold received: {}", packet.threshold.0);
+                    println!("Compression is not supported by the client.");
                     // dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
                 }
                 valence_protocol::packets::login::LoginSuccessS2c::ID => {
@@ -394,47 +399,47 @@ async fn login_and_handle_updates(
                         packet.username, packet.uuid
                     );
                 }
-                valence_protocol::packets::play::GameJoinS2c::ID => {
-                    let packet: valence_protocol::packets::play::GameJoinS2c =
+                GameJoinS2c::ID => {
+                    let packet: GameJoinS2c =
                         frame.decode().expect("Failed to decode GameJoinS2c");
                     println!("Joined the game world with Entity ID: {}", packet.entity_id);
                 }
-                valence_protocol::packets::play::PlayerPositionLookS2c::ID => {
-                    let packet: valence_protocol::packets::play::PlayerPositionLookS2c =
+                PlayerPositionLookS2c::ID => {
+                    let packet: PlayerPositionLookS2c =
                         frame.decode().expect("Failed to decode PlayerPositionLookS2c");
                     println!(
                         "Player position updated: x={}, y={}, z={}, yaw={}, pitch={}",
                         packet.position.x, packet.position.y, packet.position.z, packet.yaw, packet.pitch
                     );
                 }
-                valence_protocol::packets::play::KeepAliveS2c::ID => {
-                    let packet: valence_protocol::packets::play::KeepAliveS2c =
+                KeepAliveS2c::ID => {
+                    let packet: KeepAliveS2c =
                         frame.decode().expect("Failed to decode KeepAliveS2c");
                     println!("KeepAlive received with ID: {}", packet.id);
-                    enc.append_packet(&valence_protocol::packets::play::KeepAliveC2s { id: packet.id })
+                    enc.append_packet(&KeepAliveC2s { id: packet.id })
                         .expect("Failed to encode KeepAliveC2s");
                     socket.write_all(&enc.take()).await.map_err(|_| ())?;
                 }
-                valence_protocol::packets::play::ChatMessageS2c::ID => {
-                    let packet: valence_protocol::packets::play::ChatMessageS2c =
+                ChatMessageS2c::ID => {
+                    let packet: ChatMessageS2c =
                         frame.decode().expect("Failed to decode ChatMessageS2c");
                     println!("Chat message: {}", packet.message);
                 }
-                valence_protocol::packets::play::DisconnectS2c::ID => {
-                    let packet: valence_protocol::packets::play::DisconnectS2c =
+                DisconnectS2c::ID => {
+                    let packet: DisconnectS2c =
                         frame.decode().expect("Failed to decode DisconnectS2c");
                     println!("Disconnected by server: {}", packet.reason);
                     return Err(()); // Exit loop after disconnect
                 }
-                valence_protocol::packets::play::HealthUpdateS2c::ID => {
-                    let packet: valence_protocol::packets::play::HealthUpdateS2c =
+                HealthUpdateS2c::ID => {
+                    let packet: HealthUpdateS2c =
                         frame.decode().expect("Failed to decode HealthUpdateS2c");
                     println!(
                         "Health Update: health={}, saturation={}",
                         packet.health, packet.food_saturation
                     );
                 }
-                valence_protocol::packets::play::ChunkDataS2c::ID => {
+                ChunkDataS2c::ID => {
                     println!("Received chunk data.");
                 }
                 _ => println!("Unhandled packet ID during login/update: {}", frame.id),
