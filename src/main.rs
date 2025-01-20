@@ -245,6 +245,8 @@ async fn main(spawner: Spawner) {
     loop {
         if let Some(config) = stack.config_v4() {
             println!("Got IP: {}", config.address);
+            logger.log("Got IP address:");
+            logger.log(&config.address.to_string());
             // Create buffers for the TCP socket
             let mut rx_buffer = [0; 4096];
             let mut tx_buffer = [0; 4096];
@@ -253,14 +255,17 @@ async fn main(spawner: Spawner) {
             let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
             // Connect to the server
-            let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25565);
+            let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25566);
+            logger.log("Connecting to server:");
+            logger.log(&*remote_endpoint.0.to_string());
+
             if let Err(e) = socket.connect(remote_endpoint).await {
                 println!("Failed to connect to server: {:?}", e);
+                logger.log("Failed to connect to server");
                 return;
             }
             println!("Connected to server at {}:{}", remote_endpoint.0, remote_endpoint.1);
-            logger.log("Connected to server!");
-            logger.log(&*remote_endpoint.0.to_string());
+            logger.log("Connected.");
 
             // Pass the socket to run_client
             if let Err(e) = run_client(socket).await {
@@ -354,7 +359,7 @@ async fn send_handshake(
     let handshake_packet = valence_protocol::packets::handshaking::handshake_c2s::HandshakeC2s {
         protocol_version: VarInt(763), // Protocol version for Minecraft 1.20
         server_address: valence_protocol::Bounded(SERVER_IP),
-        server_port: 25565,
+        server_port: 25566,
         next_state,
     };
 
