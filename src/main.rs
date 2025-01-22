@@ -233,6 +233,7 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
+    spawner.spawn(tick_task()).ok();
 
     loop {
         if stack.is_link_up() {
@@ -369,6 +370,14 @@ async fn send_handshake(
     Ok(())
 }
 
+#[embassy_executor::task]
+async fn tick_task() {
+    loop {
+        println!("Tick...");
+        Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
 async fn login_and_handle_updates(
     socket: &mut TcpSocket<'_>,
     dec: &mut PacketDecoder,
@@ -392,6 +401,8 @@ async fn login_and_handle_updates(
             println!("Connection closed by server.");
             return Ok(());
         }
+        println!("Received {} bytes", bytes_read);
+        // println!("Received data: {:?}", &buf[..bytes_read]);
 
         dec.queue_bytes((&buf[..bytes_read]).into());
         while let Ok(Some(frame)) = dec.try_next_packet() {
@@ -412,9 +423,10 @@ async fn login_and_handle_updates(
                     );
                 }
                 GameJoinS2c::ID => {
-                    let packet: GameJoinS2c =
-                        frame.decode().expect("Failed to decode GameJoinS2c");
-                    println!("Joined the game world with Entity ID: {}", packet.entity_id);
+                    // let packet: GameJoinS2c =
+                    //     frame.decode().expect("Failed to decode GameJoinS2c");
+                    // println!("Joined the game world with Entity ID: {}", packet.entity_id);
+                    println!("GameJoin - skipping deserialization - requires binary compound support")
                 }
                 PlayerPositionLookS2c::ID => {
                     let packet: PlayerPositionLookS2c =
@@ -497,6 +509,9 @@ async fn login_and_handle_updates(
                 }
                 CommandTreeS2c::ID => {
                     println!("Received CommandTreeS2c.");
+                }
+                SynchronizeTagsS2c::ID => {
+                    println!("Received SynchronizeTagsS2c.");
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
