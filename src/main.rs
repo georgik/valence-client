@@ -40,7 +40,7 @@ use esp_wifi::{
 };
 use valence_protocol::{Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
 use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginCompressionS2c};
-use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c};
+use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c};
 use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
 
 
@@ -395,7 +395,7 @@ async fn login_and_handle_updates(
 
         dec.queue_bytes((&buf[..bytes_read]).into());
         while let Ok(Some(frame)) = dec.try_next_packet() {
-            println!("Received packet ID: {}", frame.id);
+            println!("Received packet ID: 0x{:X}", frame.id);
             match frame.id {
                 LoginCompressionS2c::ID => {
                     let packet: valence_protocol::packets::login::LoginCompressionS2c =
@@ -454,7 +454,51 @@ async fn login_and_handle_updates(
                 ChunkDataS2c::ID => {
                     println!("Received chunk data.");
                 }
-                _ => println!("Unhandled packet ID during login/update: {}", frame.id),
+                PlayerSpawnPositionS2c::ID => {
+                    let packet: PlayerSpawnPositionS2c =
+                        frame.decode().expect("Failed to decode PlayerSpawnPositionS2c");
+                    println!(
+                        "Player spawn position: x={}, y={}, z={}",
+                        packet.position.x, packet.position.y, packet.position.z
+                    );
+                }
+                PlayerAbilitiesS2c::ID => {
+                    let packet: PlayerAbilitiesS2c =
+                        frame.decode().expect("Failed to decode PlayerAbilitiesS2c");
+                    println!("Player abilities: {:?}", packet.flags);
+                }
+                EntityStatusS2c::ID => {
+                    let packet: EntityStatusS2c =
+                        frame.decode().expect("Failed to decode EntityStatusS2c");
+                    println!("Entity status: entity_id={}, status={}", packet.entity_id, packet.entity_status);
+                }
+                EntityAttributesS2c::ID => {
+                    let packet: EntityAttributesS2c =
+                        frame.decode().expect("Failed to decode EntityAttributesS2c");
+                    println!("Entity attributes: entity_id={:?}, attributes={:?}", packet.entity_id, packet.properties);
+                }
+                UpdateSelectedSlotS2c::ID => {
+                    let packet: UpdateSelectedSlotS2c =
+                        frame.decode().expect("Failed to decode UpdateSelectedSlotS2c");
+                    println!("Selected slot updated: slot={}", packet.slot);
+                }
+                PlayerListS2c::ID => {
+                    let packet: PlayerListS2c =
+                        frame.decode().expect("Failed to decode PlayerListS2c");
+                    println!("Player list: {:?}", packet.entries);
+                }
+                ScreenHandlerSlotUpdateS2c::ID => {
+                    println!("Received ScreenHandlerSlotUpdateS2c.");
+                }
+                AdvancementUpdateS2c::ID => {
+                    let packet: AdvancementUpdateS2c =
+                        frame.decode().expect("Failed to decode AdvancementUpdateS2c");
+                    println!("Advancement update: {:?}", packet.identifiers);
+                }
+                CommandTreeS2c::ID => {
+                    println!("Received CommandTreeS2c.");
+                }
+                _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
         }
     }
