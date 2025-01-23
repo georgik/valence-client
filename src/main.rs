@@ -13,9 +13,12 @@ use defmt::info;
 use embedded_hal::delay::DelayNs;
 use alloc::vec::Vec;
 use crate::alloc::string::ToString;
+#[cfg(feature = "gui")]
 use esp_bsp::prelude::*;
+#[cfg(feature = "gui")]
 use esp_display_interface_spi_dma::display_interface_spi_dma;
 
+#[cfg(feature = "gui")]
 use embedded_graphics::{
     mono_font::{ascii::FONT_8X13, MonoTextStyle},
     prelude::{Point, RgbColor},
@@ -58,8 +61,11 @@ const SERVER_IP: &str = env!("SERVER_IP");
 
 // Graphical logging
 use core::fmt::Write as FmtWrite;
+#[cfg(feature = "gui")]
 use embedded_graphics::pixelcolor::Rgb565;
+#[cfg(feature = "gui")]
 use embedded_graphics::prelude::Size;
+#[cfg(feature = "gui")]
 use embedded_graphics::primitives::Rectangle;
 
 const LOG_CAPACITY: usize = 1024; // Total characters for logging
@@ -67,6 +73,7 @@ const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
 const SCREEN_HEIGHT: u32 = 240; // Adjust based on your display
 const LINE_HEIGHT: u32 = 14; // Line height for the chosen font
 
+#[cfg(feature = "gui")]
 pub struct Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -77,6 +84,7 @@ where
     scroll_offset: usize,         // Offset for scrolling
 }
 
+#[cfg(feature = "gui")]
 impl<'a, D> Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -178,22 +186,25 @@ async fn main(spawner: Spawner) {
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
 
-
+    #[cfg(feature = "gui")]
     let spi = lcd_spi!(peripherals);
 
     info!("SPI ready");
 
     // Use the `lcd_display_interface` macro to create the display interface
+    #[cfg(feature = "gui")]
     let di = lcd_display_interface!(peripherals, spi);
 
     let mut delay = Delay::new();
     delay.delay_ns(500_000u32);
 
+    #[cfg(feature = "gui")]
     let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
 
     // Use the `lcd_backlight_init` macro to turn on the backlight
+    #[cfg(feature = "gui")]
     lcd_backlight_init!(peripherals);
-
+    #[cfg(feature = "gui")]
     let mut logger = Logger::new(&mut display);
     // Text::new(
     //     "Initializing...",
@@ -202,6 +213,7 @@ async fn main(spawner: Spawner) {
     // )
     //     .draw(&mut display)
     //     .unwrap();
+    #[cfg(feature = "gui")]
     logger.log("Initializing...");
 
 
@@ -241,12 +253,14 @@ async fn main(spawner: Spawner) {
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-
+    #[cfg(feature = "gui")]
     logger.log("Waiting to get IP address...");
     loop {
         if let Some(config) = stack.config_v4() {
             println!("Got IP: {}", config.address);
+            #[cfg(feature = "gui")]
             logger.log("Got IP address:");
+            #[cfg(feature = "gui")]
             logger.log(&config.address.to_string());
             // Create buffers for the TCP socket
             let mut rx_buffer = [0; 4096];
@@ -257,15 +271,19 @@ async fn main(spawner: Spawner) {
 
             // Connect to the server
             let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25566);
+            #[cfg(feature = "gui")]
             logger.log("Connecting to server:");
+            #[cfg(feature = "gui")]
             logger.log(&*remote_endpoint.0.to_string());
 
             if let Err(e) = socket.connect(remote_endpoint).await {
                 println!("Failed to connect to server: {:?}", e);
+                #[cfg(feature = "gui")]
                 logger.log("Failed to connect to server");
                 return;
             }
             println!("Connected to server at {}:{}", remote_endpoint.0, remote_endpoint.1);
+            #[cfg(feature = "gui")]
             logger.log("Connected.");
 
             // Pass the socket to run_client
@@ -515,6 +533,10 @@ async fn login_and_handle_updates(
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
+            println!("Inner loop");
+            Timer::after(Duration::from_millis(10)).await;
         }
+        Timer::after(Duration::from_millis(10)).await;
+        println!("Outer loop");
     }
 }
