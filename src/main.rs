@@ -14,6 +14,7 @@ use embedded_hal::delay::DelayNs;
 use alloc::vec::Vec;
 use crate::alloc::string::ToString;
 use esp_bsp::prelude::*;
+use esp_hal::psram;
 use esp_display_interface_spi_dma::display_interface_spi_dma;
 
 use embedded_graphics::{
@@ -147,6 +148,19 @@ where
     }
 }
 
+fn init_psram_heap(start: *mut u8, size: usize) {
+    println!("Starting PSRAM heap at 0x{:08X} with size {}", start as usize, size);
+    unsafe {
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            start,
+            size,
+            esp_alloc::MemoryCapability::External.into(),
+        ));
+    }
+}
+
+#[cfg(is_not_release)]
+compile_error!("PSRAM example must be built in release mode!");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -157,31 +171,64 @@ async fn main(spawner: Spawner) {
         config
     });
     println!(" ok");
+    // let wifi_stack = mk_static!(StackResources<3>, StackResources::<3>::new());
 
-    esp_println::logger::init_logger_from_env();
-
-    // print!("PSRAM...");
-    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-    // println!(" ok");
-
-    const memory_size: usize = 160 * 1024;
+    const memory_size: usize = 72 * 1024;
     print!("Initializing allocator with {} bytes...", memory_size);
     esp_alloc::heap_allocator!(memory_size);
     println!(" ok");
 
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let mut rng = Rng::new(peripherals.RNG);
+    esp_println::logger::init_logger_from_env();
+    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    println!(" ok");
 
+    let timer0 = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
+        .split::<esp_hal::timer::systimer::Target>();
+    esp_hal_embassy::init(timer0.alarm0);
+
+    info!("Embassy initialized!");
+    let mut rng = Rng::new(peripherals.RNG);
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+    let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
+    // let init = esp_wifi::init(
+    //     timer1.timer0,
+    //     rng,
+    //     peripherals.RADIO_CLK,
+    // )
+    //     .unwrap();
+
+    Timer::after(Duration::from_millis(1500)).await;
+
+    // let timg0 = TimerGroup::new(peripherals.TIMG0);
+
+    //
     let init = &*mk_static!(
         EspWifiController<'static>,
-        init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
+        init(timer1.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
+
+    let wifi = peripherals.WIFI;
+
+    let (wifi_interface, controller) = match esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice) {
+        Ok(result) => result,
+        Err(e) => {
+            println!("Failed to initialize WiFi with mode: {:?}", e);
+            return;
+        }
+    };
 
 
     let spi = lcd_spi!(peripherals);
 
-    info!("SPI ready");
+    println!("SPI ready");
+    print!("PSRAM...");
+    let psram_config  = psram::PsramConfig::default();
+
+    let (start, size) = psram::init_psram(peripherals.PSRAM, psram::PsramConfig::default());
+    init_psram_heap(start, size);
+
 
     // Use the `lcd_display_interface` macro to create the display interface
     let di = lcd_display_interface!(peripherals, spi);
@@ -194,6 +241,7 @@ async fn main(spawner: Spawner) {
     // Use the `lcd_backlight_init` macro to turn on the backlight
     lcd_backlight_init!(peripherals);
 
+
     let mut logger = Logger::new(&mut display);
     // Text::new(
     //     "Initializing...",
@@ -205,78 +253,13 @@ async fn main(spawner: Spawner) {
     logger.log("Initializing...");
 
 
-    let wifi = peripherals.WIFI;
-    let (wifi_interface, controller) =
-        esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+    //
+    //
+    // let server_ip: Ipv4Addr = SERVER_IP.parse().expect("Invalid SERVER_IP address");
+    // let config = embassy_net::Config::dhcpv4(Default::default());
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "esp32")] {
-            let timg1 = TimerGroup::new(peripherals.TIMG1);
-            esp_hal_embassy::init(timg1.timer0);
-        } else {
-            let timer0 = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
-                .split::<esp_hal::timer::systimer::Target>();
-            esp_hal_embassy::init(timer0.alarm0);
-        }
-    }
-
-    let server_ip: Ipv4Addr = SERVER_IP.parse().expect("Invalid SERVER_IP address");
-    let config = embassy_net::Config::dhcpv4(Default::default());
-    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
-
-    let (stack, runner) = embassy_net::new(
-        wifi_interface,
-        config,
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
-        seed,
-    );
-
-    spawner.spawn(connection(controller)).ok();
-    spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(tick_task()).ok();
-
-    loop {
-        if stack.is_link_up() {
-            break;
-        }
-        Timer::after(Duration::from_millis(500)).await;
-    }
-
-    logger.log("Waiting to get IP address...");
-    loop {
-        if let Some(config) = stack.config_v4() {
-            println!("Got IP: {}", config.address);
-            logger.log("Got IP address:");
-            logger.log(&config.address.to_string());
-            // Create buffers for the TCP socket
-            let mut rx_buffer = [0; 4096];
-            let mut tx_buffer = [0; 4096];
-
-            // Create the socket
-            let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-
-            // Connect to the server
-            let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25566);
-            logger.log("Connecting to server:");
-            logger.log(&*remote_endpoint.0.to_string());
-
-            if let Err(e) = socket.connect(remote_endpoint).await {
-                println!("Failed to connect to server: {:?}", e);
-                logger.log("Failed to connect to server");
-                return;
-            }
-            println!("Connected to server at {}:{}", remote_endpoint.0, remote_endpoint.1);
-            logger.log("Connected.");
-
-            // Pass the socket to run_client
-            if let Err(e) = run_client(socket).await {
-                println!("Error in run_client: {:?}", e);
-            }
-
-            break;
-        }
-        Timer::after(Duration::from_millis(500)).await;
-    }
+    Timer::after(Duration::from_millis(1500)).await;
+    println!("Starting network stack...");
 
 }
 
@@ -404,7 +387,9 @@ async fn login_and_handle_updates(
         println!("Received {} bytes", bytes_read);
         // println!("Received data: {:?}", &buf[..bytes_read]);
 
+
         dec.queue_bytes((&buf[..bytes_read]).into());
+        println!("After queue");
         while let Ok(Some(frame)) = dec.try_next_packet() {
             println!("Received packet ID: 0x{:X}", frame.id);
             match frame.id {
@@ -514,7 +499,12 @@ async fn login_and_handle_updates(
                     println!("Received SynchronizeTagsS2c.");
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
+
             }
+            println!("Inner loop...");
+            Timer::after(Duration::from_millis(10)).await;
         }
+        println!("Outer loop...");
+        Timer::after(Duration::from_millis(10)).await;
     }
 }
