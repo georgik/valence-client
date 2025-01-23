@@ -5,11 +5,12 @@ use defmt_rtt as _;
 use defmt::info;
 use esp_hal::psram;
 
-use esp_hal::prelude::*;
+// use esp_hal::prelude::*;
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_alloc as _;
+use esp_alloc::HeapStats;
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, rng::Rng};
 use esp_println::{print, println};
@@ -66,9 +67,9 @@ async fn main(spawner: Spawner) {
     // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
     println!(" ok");
 
-    let timer0 = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
-        .split::<esp_hal::timer::systimer::Target>();
-    esp_hal_embassy::init(timer0.alarm0);
+    use esp_hal::timer::systimer::SystemTimer;
+    let systimer = SystemTimer::new(peripherals.SYSTIMER);
+    esp_hal_embassy::init(systimer.alarm0);
 
     info!("Embassy initialized!");
     let mut rng = Rng::new(peripherals.RNG);
@@ -103,15 +104,17 @@ async fn main(spawner: Spawner) {
     };
 
 
-    println!("PSRAMConfig");
-    let psram_config  = psram::PsramConfig::default();
+    // println!("PSRAMConfig");
+    // let psram_config  = psram::PsramConfig::default();
 
     println!("init_psram");
-    let (start, size) = psram::init_psram(peripherals.PSRAM, psram::PsramConfig::default()); // It hangs here
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
-    println!("init_psram_heap");
-    init_psram_heap(start, size);
-    println!("Delay for 1500 ms");
+    let stats: HeapStats = esp_alloc::HEAP.stats();
+    // HeapStats implements the Display and defmt::Format traits, so you can pretty-print the heap stats.
+    println!("{}", stats);
+    // init_psram_heap(start, size);
+    // println!("Delay for 1500 ms");
 
 
     Timer::after(Duration::from_millis(1500)).await;
