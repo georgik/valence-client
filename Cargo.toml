@@ -67,7 +67,8 @@ mipidsi = { version = "0.8.0", optional = true }
 embedded-hal = "1.0.0"
 
 [features]
-default = [ "esp32-s3-box" ]
+default = [ "esp32-s3-headless" ]
+#default = [ "esp32-s3-box" ]
 #default = [ "waveshare-esp32-c6-lcd-1-47" ]
 
 esp32s3 = [ "esp-hal/esp32s3", "esp-wifi/esp32s3", "esp-println/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3"]
@@ -76,6 +77,7 @@ esp32c6 = [ "esp-hal/esp32c6", "esp-wifi/esp32c6", "esp-println/esp32c6", "esp-b
 
 gui = [ "esp-bsp", "embedded-graphics", "esp-display-interface-spi-dma", "mipidsi" ]
 
+esp32-s3-headless = [ "esp32s3", "esp-hal/octal-psram" ]
 esp32-s3-box = [ "esp32s3", "gui", "esp-bsp/esp32-s3-box", "esp-hal/octal-psram"]
 waveshare-esp32-c6-lcd-1-47 = [ "esp32c6", "gui", "esp-bsp/waveshare-esp32-c6-lcd-1-47"]
 

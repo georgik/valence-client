@@ -13,10 +13,12 @@ use defmt::info;
 use embedded_hal::delay::DelayNs;
 use alloc::vec::Vec;
 use crate::alloc::string::ToString;
+#[cfg(feature = "gui")]
 use esp_bsp::prelude::*;
 use esp_hal::psram;
+#[cfg(feature = "gui")]
 use esp_display_interface_spi_dma::display_interface_spi_dma;
-
+#[cfg(feature = "gui")]
 use embedded_graphics::{
     mono_font::{ascii::FONT_8X13, MonoTextStyle},
     prelude::{Point, RgbColor},
@@ -59,8 +61,11 @@ const SERVER_IP: &str = env!("SERVER_IP");
 
 // Graphical logging
 use core::fmt::Write as FmtWrite;
+#[cfg(feature = "gui")]
 use embedded_graphics::pixelcolor::Rgb565;
+#[cfg(feature = "gui")]
 use embedded_graphics::prelude::Size;
+#[cfg(feature = "gui")]
 use embedded_graphics::primitives::Rectangle;
 
 const LOG_CAPACITY: usize = 1024; // Total characters for logging
@@ -68,6 +73,7 @@ const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
 const SCREEN_HEIGHT: u32 = 240; // Adjust based on your display
 const LINE_HEIGHT: u32 = 14; // Line height for the chosen font
 
+#[cfg(feature = "gui")]
 pub struct Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -78,6 +84,7 @@ where
     scroll_offset: usize,         // Offset for scrolling
 }
 
+#[cfg(feature = "gui")]
 impl<'a, D> Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -219,29 +226,33 @@ async fn main(spawner: Spawner) {
         }
     };
 
-
-    let spi = lcd_spi!(peripherals);
-
-    println!("SPI ready");
     print!("PSRAM...");
     let psram_config  = psram::PsramConfig::default();
 
     let (start, size) = psram::init_psram(peripherals.PSRAM, psram::PsramConfig::default());
     init_psram_heap(start, size);
 
+    #[cfg(feature = "gui")]
+    let spi = lcd_spi!(peripherals);
+
+    println!("SPI ready");
+
 
     // Use the `lcd_display_interface` macro to create the display interface
+    #[cfg(feature = "gui")]
     let di = lcd_display_interface!(peripherals, spi);
 
     let mut delay = Delay::new();
     delay.delay_ns(500_000u32);
 
+    #[cfg(feature = "gui")]
     let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
 
     // Use the `lcd_backlight_init` macro to turn on the backlight
+    #[cfg(feature = "gui")]
     lcd_backlight_init!(peripherals);
 
-
+    #[cfg(feature = "gui")]
     let mut logger = Logger::new(&mut display);
     // Text::new(
     //     "Initializing...",
@@ -250,6 +261,7 @@ async fn main(spawner: Spawner) {
     // )
     //     .draw(&mut display)
     //     .unwrap();
+    #[cfg(feature = "gui")]
     logger.log("Initializing...");
 
 
