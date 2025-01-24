@@ -433,11 +433,17 @@ async fn login_and_handle_updates(
             println!("Received packet ID: 0x{:X}", frame.id);
             match frame.id {
                 LoginCompressionS2c::ID => {
-                    let packet: valence_protocol::packets::login::LoginCompressionS2c =
-                        frame.decode().expect("Failed to decode LoginCompressionS2c");
-                    println!("Compression threshold received: {}", packet.threshold.0);
-                    dec.set_compression(valence_protocol::CompressionThreshold(packet.threshold.0));
+                    println!("LoginCompressionS2c");
+                    // let packet: LoginCompressionS2c = frame.decode().expect("Failed to decode LoginCompressionS2c");
+                    let threshold = 256;
+                    // let threshold = packet.threshold.0;
+                    println!("Compression threshold received: {}", threshold);
+
+                    // Set compression threshold for decoder and encoder
+                    dec.set_compression(valence_protocol::CompressionThreshold(threshold));
+                    enc.set_compression(valence_protocol::CompressionThreshold(threshold));
                 }
+
                 LoginSuccessS2c::ID => {
                     let packet: LoginSuccessS2c =
                         frame.decode().expect("Failed to decode LoginSuccessS2c");
@@ -461,12 +467,31 @@ async fn login_and_handle_updates(
                     );
                 }
                 KeepAliveS2c::ID => {
-                    let packet: KeepAliveS2c =
-                        frame.decode().expect("Failed to decode KeepAliveS2c");
+                    let packet: KeepAliveS2c = frame.decode().expect("Failed to decode KeepAliveS2c");
                     println!("KeepAlive received with ID: {}", packet.id);
+
+                    // Encode the KeepAliveC2s response
+                    enc.clear();
                     enc.append_packet(&KeepAliveC2s { id: packet.id })
                         .expect("Failed to encode KeepAliveC2s");
-                    socket.write_all(&enc.take()).await.map_err(|_| ())?;
+
+                    let data = enc.take();
+
+                    println!("Encoded KeepAliveC2s packet: {:?}", data);
+
+                    // Send the packet to the server
+                    match socket.write_all(&data).await {
+                        Ok(_) => {
+                            println!("Successfully sent KeepAliveC2s with ID: {}", packet.id);
+                        }
+                        Err(e) => {
+                            println!(
+                                "Failed to send KeepAliveC2s with ID: {}. Error: {:?}",
+                                packet.id, e
+                            );
+                            return Err(()); // Handle error
+                        }
+                    }
                 }
                 ChatMessageS2c::ID => {
                     let packet: ChatMessageS2c =
