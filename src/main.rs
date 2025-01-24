@@ -32,7 +32,7 @@ use esp_hal::prelude::*;
 
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Runner, StackResources};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_alloc::HeapStats;
@@ -44,9 +44,9 @@ use esp_wifi::{
     wifi::{ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent, WifiStaDevice, WifiState},
     EspWifiController,
 };
-use valence_protocol::{Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
+use valence_protocol::{Bounded, Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
 use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginCompressionS2c};
-use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c};
+use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c};
 use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
 
 
@@ -453,10 +453,9 @@ async fn login_and_handle_updates(
                     );
                 }
                 GameJoinS2c::ID => {
-                    // let packet: GameJoinS2c =
-                    //     frame.decode().expect("Failed to decode GameJoinS2c");
-                    // println!("Joined the game world with Entity ID: {}", packet.entity_id);
-                    println!("GameJoin - skipping deserialization - requires binary compound support")
+                    // Assuming the player successfully joined the game world.
+                    println!("GameJoin - skipping deserialization - requires binary compound support");
+
                 }
                 PlayerPositionLookS2c::ID => {
                     let packet: PlayerPositionLookS2c =
@@ -562,6 +561,41 @@ async fn login_and_handle_updates(
                 }
                 SynchronizeTagsS2c::ID => {
                     println!("Received SynchronizeTagsS2c.");
+                }
+                GameMessageS2c::ID => {
+                    let packet: GameMessageS2c =
+                        frame.decode().expect("Failed to decode GameMessageS2c");
+                    let received_message = packet.chat.to_string();
+                    println!("Received message: {:?}", received_message);
+
+                    if received_message.contains("How are you?") {
+                        // Send a chat message "ahoj"
+                        let message = ChatMessageC2s {
+                            message: valence_protocol::Bounded("I feel good. I'm running at 240 MHz.".into()), // The message content
+                            timestamp: 0,
+                            salt: 0,
+                            signature: None,
+                            message_count: Default::default(),
+                            acknowledgement: Default::default(),
+                        };
+
+                        enc.clear();
+                        enc.append_packet(&message)
+                            .expect("Failed to encode ChatMessageC2s");
+                        let data = enc.take();
+
+                        println!("Sending ChatMessageC2s packet: {:?}", data);
+
+                        match socket.write_all(&data).await {
+                            Ok(_) => {
+                                println!("Chat message sent: 'ahoj'");
+                            }
+                            Err(e) => {
+                                println!("Failed to send chat message. Error: {:?}", e);
+                            }
+                        }
+                    }
+
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
