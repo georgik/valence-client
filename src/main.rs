@@ -153,6 +153,13 @@ where
     }
 }
 
+fn heap_stats() {
+    let stats: HeapStats = esp_alloc::HEAP.stats();
+    // HeapStats implements the Display and defmt::Format traits, so you can pretty-print the heap stats.
+    println!("{}", stats);
+
+}
+
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -224,9 +231,7 @@ async fn main(spawner: Spawner) {
         println!("ok");
     }
 
-    let stats: HeapStats = esp_alloc::HEAP.stats();
-    // HeapStats implements the Display and defmt::Format traits, so you can pretty-print the heap stats.
-    println!("{}", stats);
+    heap_stats();
 
     let systimer = SystemTimer::new(peripherals.SYSTIMER);
     esp_hal_embassy::init(systimer.alarm0);
@@ -392,6 +397,7 @@ async fn send_handshake(
 async fn tick_task() {
     loop {
         println!("Tick...");
+        // heap_stats();
         Timer::after(Duration::from_secs(1)).await;
     }
 }
@@ -450,7 +456,7 @@ async fn login_and_handle_updates(
                     let packet: PlayerPositionLookS2c =
                         frame.decode().expect("Failed to decode PlayerPositionLookS2c");
                     println!(
-                        "Player position updated: x={}, y={}, z={}, yaw={}, pitch={}",
+                        "Player position look: x={}, y={}, z={}, yaw={}, pitch={}",
                         packet.position.x, packet.position.y, packet.position.z, packet.yaw, packet.pitch
                     );
                 }
@@ -485,12 +491,13 @@ async fn login_and_handle_updates(
                     println!("Received chunk data.");
                 }
                 PlayerSpawnPositionS2c::ID => {
-                    let packet: PlayerSpawnPositionS2c =
-                        frame.decode().expect("Failed to decode PlayerSpawnPositionS2c");
-                    println!(
-                        "Player spawn position: x={}, y={}, z={}",
-                        packet.position.x, packet.position.y, packet.position.z
-                    );
+                    // let packet: PlayerSpawnPositionS2c =
+                    //     frame.decode().expect("Failed to decode PlayerSpawnPositionS2c");
+                    // println!(
+                    //     "Player spawn position: x={}, y={}, z={}",
+                    //     packet.position.x, packet.position.y, packet.position.z
+                    // );
+                    println!("PlayerSpawnPositionS2c");
                 }
                 PlayerAbilitiesS2c::ID => {
                     let packet: PlayerAbilitiesS2c =
@@ -533,6 +540,9 @@ async fn login_and_handle_updates(
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
+            // heap_stats();
+            Timer::after(Duration::from_millis(10)).await;
         }
+        Timer::after(Duration::from_millis(10)).await;
     }
 }
