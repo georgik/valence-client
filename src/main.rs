@@ -4,8 +4,9 @@ extern crate alloc;
 use esp_hal::gpio::Level;
 use esp_hal::gpio::Output;
 use esp_hal::dma::DmaPriority;
-use esp_hal::dma::Dma;
+use esp_hal::dma::Owner::Dma;
 use esp_hal::spi::master::Spi;
+use esp_hal::timer::systimer::SystemTimer;
 use defmt_rtt as _;
 use heapless::String;
 use core::net::Ipv4Addr;
@@ -13,9 +14,12 @@ use defmt::info;
 use embedded_hal::delay::DelayNs;
 use alloc::vec::Vec;
 use crate::alloc::string::ToString;
+#[cfg(feature = "gui")]
 use esp_bsp::prelude::*;
+#[cfg(feature = "gui")]
 use esp_display_interface_spi_dma::display_interface_spi_dma;
 
+#[cfg(feature = "gui")]
 use embedded_graphics::{
     mono_font::{ascii::FONT_8X13, MonoTextStyle},
     prelude::{Point, RgbColor},
@@ -23,6 +27,7 @@ use embedded_graphics::{
     Drawable,
 };
 
+#[cfg(feature = "gui")]
 use esp_hal::prelude::*;
 
 use embassy_executor::Spawner;
@@ -30,6 +35,7 @@ use embassy_net::{tcp::TcpSocket, Runner, StackResources};
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
 use esp_alloc as _;
+use esp_alloc::HeapStats;
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup, delay::Delay,};
 use esp_println::{print, println};
@@ -58,15 +64,15 @@ const SERVER_IP: &str = env!("SERVER_IP");
 
 // Graphical logging
 use core::fmt::Write as FmtWrite;
-use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::Size;
-use embedded_graphics::primitives::Rectangle;
+#[cfg(feature = "gui")]
+use embedded_graphics::{pixelcolor::Rgb565, prelude::Size, primitives::Rectangle};
 
 const LOG_CAPACITY: usize = 1024; // Total characters for logging
 const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
 const SCREEN_HEIGHT: u32 = 240; // Adjust based on your display
 const LINE_HEIGHT: u32 = 14; // Line height for the chosen font
 
+#[cfg(feature = "gui")]
 pub struct Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -76,7 +82,7 @@ where
     text_style: MonoTextStyle<'static, Rgb565>, // Text style
     scroll_offset: usize,         // Offset for scrolling
 }
-
+#[cfg(feature = "gui")]
 impl<'a, D> Logger<'a, D>
 where
     D: embedded_graphics::draw_target::DrawTarget<Color = Rgb565>,
@@ -160,9 +166,6 @@ async fn main(spawner: Spawner) {
 
     esp_println::logger::init_logger_from_env();
 
-    // print!("PSRAM...");
-    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-    // println!(" ok");
 
     const memory_size: usize = 160 * 1024;
     print!("Initializing allocator with {} bytes...", memory_size);
@@ -178,22 +181,26 @@ async fn main(spawner: Spawner) {
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
 
-
+    #[cfg(feature = "gui")]
     let spi = lcd_spi!(peripherals);
 
     info!("SPI ready");
 
     // Use the `lcd_display_interface` macro to create the display interface
+    #[cfg(feature = "gui")]
     let di = lcd_display_interface!(peripherals, spi);
 
     let mut delay = Delay::new();
     delay.delay_ns(500_000u32);
 
+    #[cfg(feature = "gui")]
     let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
 
     // Use the `lcd_backlight_init` macro to turn on the backlight
+    #[cfg(feature = "gui")]
     lcd_backlight_init!(peripherals);
 
+    #[cfg(feature = "gui")]
     let mut logger = Logger::new(&mut display);
     // Text::new(
     //     "Initializing...",
@@ -202,6 +209,7 @@ async fn main(spawner: Spawner) {
     // )
     //     .draw(&mut display)
     //     .unwrap();
+    #[cfg(feature = "gui")]
     logger.log("Initializing...");
 
 
@@ -209,16 +217,19 @@ async fn main(spawner: Spawner) {
     let (wifi_interface, controller) =
         esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "esp32")] {
-            let timg1 = TimerGroup::new(peripherals.TIMG1);
-            esp_hal_embassy::init(timg1.timer0);
-        } else {
-            let timer0 = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER)
-                .split::<esp_hal::timer::systimer::Target>();
-            esp_hal_embassy::init(timer0.alarm0);
-        }
+    #[cfg(feature = "psram")]
+    {
+        print!("init_psram... ");
+        esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+        println!("ok");
     }
+
+    let stats: HeapStats = esp_alloc::HEAP.stats();
+    // HeapStats implements the Display and defmt::Format traits, so you can pretty-print the heap stats.
+    println!("{}", stats);
+
+    let systimer = SystemTimer::new(peripherals.SYSTIMER);
+    esp_hal_embassy::init(systimer.alarm0);
 
     let server_ip: Ipv4Addr = SERVER_IP.parse().expect("Invalid SERVER_IP address");
     let config = embassy_net::Config::dhcpv4(Default::default());
@@ -242,11 +253,14 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(500)).await;
     }
 
+    #[cfg(feature = "gui")]
     logger.log("Waiting to get IP address...");
     loop {
         if let Some(config) = stack.config_v4() {
             println!("Got IP: {}", config.address);
+            #[cfg(feature = "gui")]
             logger.log("Got IP address:");
+            #[cfg(feature = "gui")]
             logger.log(&config.address.to_string());
             // Create buffers for the TCP socket
             let mut rx_buffer = [0; 4096];
@@ -257,15 +271,19 @@ async fn main(spawner: Spawner) {
 
             // Connect to the server
             let remote_endpoint = (SERVER_IP.parse::<Ipv4Addr>().expect("Invalid SERVER_IP address"), 25566);
+            #[cfg(feature = "gui")]
             logger.log("Connecting to server:");
+            #[cfg(feature = "gui")]
             logger.log(&*remote_endpoint.0.to_string());
 
             if let Err(e) = socket.connect(remote_endpoint).await {
                 println!("Failed to connect to server: {:?}", e);
+                #[cfg(feature = "gui")]
                 logger.log("Failed to connect to server");
                 return;
             }
             println!("Connected to server at {}:{}", remote_endpoint.0, remote_endpoint.1);
+            #[cfg(feature = "gui")]
             logger.log("Connected.");
 
             // Pass the socket to run_client
