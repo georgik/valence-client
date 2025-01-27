@@ -46,7 +46,7 @@ use esp_wifi::{
 };
 use valence_protocol::{Bounded, Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
 use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginCompressionS2c};
-use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c};
+use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c, EntitySetHeadYawS2c, RotateS2c};
 use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
 
 use esp_hal::{rmt::Rmt, time::RateExtU32};
@@ -78,6 +78,7 @@ const SERVER_IP: &str = env!("SERVER_IP");
 
 // Graphical logging
 use core::fmt::Write as FmtWrite;
+use embassy_futures::yield_now;
 #[cfg(feature = "gui")]
 use embedded_graphics::{pixelcolor::Rgb565, prelude::Size, primitives::Rectangle};
 
@@ -188,7 +189,7 @@ async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
 
 
-    const memory_size: usize = 160 * 1024;
+    const memory_size: usize = 300 * 1024;
     print!("Initializing allocator with {} bytes...", memory_size);
     esp_alloc::heap_allocator!(memory_size);
     println!(" ok");
@@ -427,7 +428,7 @@ async fn send_handshake(
 async fn tick_task() {
     loop {
         println!("Tick...");
-        // heap_stats();
+        yield_now().await;
         Timer::after(Duration::from_secs(1)).await;
     }
 }
@@ -463,6 +464,7 @@ async fn hardware_task_runner(
                     .unwrap();
             }
         }
+        yield_now().await;
     }
 }
 
@@ -484,7 +486,8 @@ async fn login_and_handle_updates(
     socket.write_all(&data).await.map_err(|_| ())?;
     println!("Login request sent.");
 
-    let mut buf = [0u8; 4096];
+    let mut buf = Vec::with_capacity(4096);
+    buf.resize(4096, 0);
     loop {
         let bytes_read = socket.read(&mut buf).await.map_err(|_| ())?;
         if bytes_read == 0 {
@@ -492,6 +495,7 @@ async fn login_and_handle_updates(
             return Ok(());
         }
         println!("Received {} bytes", bytes_read);
+        heap_stats();
         // println!("Received data: {:?}", &buf[..bytes_read]);
 
         dec.queue_bytes((&buf[..bytes_read]).into());
@@ -559,6 +563,7 @@ async fn login_and_handle_updates(
                             return Err(()); // Handle error
                         }
                     }
+                    socket.flush().await.unwrap();
                 }
                 ChatMessageS2c::ID => {
                     let packet: ChatMessageS2c =
@@ -592,6 +597,7 @@ async fn login_and_handle_updates(
                     println!("PlayerSpawnPositionS2c");
                 }
                 PlayerAbilitiesS2c::ID => {
+                    heap_stats();
                     let packet: PlayerAbilitiesS2c =
                         frame.decode().expect("Failed to decode PlayerAbilitiesS2c");
                     println!("Player abilities: {:?}", packet.flags);
@@ -662,14 +668,20 @@ async fn login_and_handle_updates(
                                 println!("Failed to send chat message. Error: {:?}", e);
                             }
                         }
+                        socket.flush().await.unwrap();
                     }
-
+                }
+                EntitySetHeadYawS2c::ID => {
+                    println!("EntitySetHeadYawS2c");
+                }
+                RotateS2c::ID => {
+                    println!("RotateS2c");
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
             // heap_stats();
-            Timer::after(Duration::from_millis(10)).await;
+            yield_now().await;
         }
-        Timer::after(Duration::from_millis(10)).await;
+        yield_now().await;
     }
 }
