@@ -49,6 +49,20 @@ use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginComp
 use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c};
 use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
 
+use esp_hal::{rmt::Rmt, time::RateExtU32};
+use esp_hal_smartled::{smartLedBuffer, SmartLedsAdapter};
+
+use smart_leds::{brightness, gamma, hsv::{hsv2rgb, Hsv}, SmartLedsWrite, RGB8};
+
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
+use esp_hal::rmt::TxChannel;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+
+// Define a static channel with a capacity of 1 for `HardwareEvent`s.
+static CHANNEL: Channel<CriticalSectionRawMutex, HardwareEvent, 1> = Channel::new();
+
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -188,6 +202,18 @@ async fn main(spawner: Spawner) {
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
 
+    let led_pin = peripherals.GPIO8;
+    let freq = 80.MHz();
+    let rmt = Rmt::new(peripherals.RMT, freq).unwrap();
+    let rmt_buffer = smartLedBuffer!(1);
+    let mut led = SmartLedsAdapter::new(rmt.channel0, led_pin, rmt_buffer);
+    // Set the RGB color (e.g., Red)
+    let color = RGB8 { r: 0, g: 0, b: 255 };
+
+    // Write color data to NeoPixel with gamma correction and brightness adjustment
+    led.write(brightness(gamma(core::iter::once(color)), 10))
+        .unwrap();
+
     #[cfg(feature = "gui")]
     let spi = lcd_spi!(peripherals);
 
@@ -197,8 +223,8 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "gui")]
     let di = lcd_display_interface!(peripherals, spi);
 
-    let mut delay = Delay::new();
-    delay.delay_ns(500_000u32);
+    // let mut delay = Delay::new();
+    // delay.delay_ns(500_000u32);
 
     #[cfg(feature = "gui")]
     let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
@@ -246,6 +272,10 @@ async fn main(spawner: Spawner) {
         mk_static!(StackResources<3>, StackResources::<3>::new()),
         seed,
     );
+
+    spawner
+        .spawn(hardware_task_runner(led, CHANNEL.receiver()))
+        .unwrap();
 
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
@@ -402,11 +432,47 @@ async fn tick_task() {
     }
 }
 
+#[derive(Debug)]
+enum HardwareEvent {
+    ToggleLed,
+    // Future events can be added here (e.g., ButtonPressed, DisplayUpdate, etc.)
+}
+
+
+#[embassy_executor::task]
+async fn hardware_task_runner(
+    mut led: SmartLedsAdapter<esp_hal::rmt::Channel<esp_hal::Blocking, 0>, 25>,
+    receiver: embassy_sync::channel::Receiver<'static, CriticalSectionRawMutex, HardwareEvent, 1>,
+) {
+    let mut toggle_state: u8 = 0;
+
+    loop {
+        let event = receiver.receive().await;
+
+        match event {
+            HardwareEvent::ToggleLed => {
+                println!("Toggle led");
+                toggle_state = (toggle_state + 1) % 3;
+                let color = match toggle_state {
+                    0 => RGB8 { r: 255, g: 0, b: 0 }, // Red
+                    1 => RGB8 { r: 0, g: 255, b: 0 }, // Green
+                    _ => RGB8 { r: 0, g: 0, b: 0 },   // Off
+                };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+        }
+    }
+}
+
+
 async fn login_and_handle_updates(
     socket: &mut TcpSocket<'_>,
     dec: &mut PacketDecoder,
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
+    let sender = CHANNEL.sender();
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
         username: valence_protocol::Bounded("ESP32-S3"), // Replace with your username
         profile_id: None, // Optional in offline mode
@@ -445,6 +511,8 @@ async fn login_and_handle_updates(
                 }
 
                 LoginSuccessS2c::ID => {
+                    heap_stats();
+                    sender.try_send(HardwareEvent::ToggleLed).unwrap();
                     let packet: LoginSuccessS2c =
                         frame.decode().expect("Failed to decode LoginSuccessS2c");
                     println!(

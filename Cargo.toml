@@ -31,6 +31,7 @@ esp-hal-embassy  = { version = "0.6.0" }
 static_cell      = { version = "2.1.0",  features = ["nightly"] }
 
 embassy-executor    = { version = "0.7.0", features = ["task-arena-size-20480"] }
+embassy-sync = "0.6.2"
 embassy-net = { version = "0.6.0", features = [ "tcp", "udp", "dhcpv4", "medium-ethernet"] }
 embassy-time        = "0.4.0"
 embedded-io         = { version = "0.6.1", default-features = false }
@@ -45,13 +46,18 @@ embedded-graphics = { version = "0.8.0", optional = true }
 esp-display-interface-spi-dma = { git = "https://github.com/georgik/esp-display-interface-spi-dma.git", rev = "7577102de678fc657b1e2ae95492b8e13a64421a", optional = true }
 mipidsi = { version = "0.9.0", optional = true }
 embedded-hal = "1.0.0"
+#esp-hal-smartled = { version = "0.14.0", optional = true }
+esp-hal-smartled = { git = "https://github.com/esp-rs/esp-hal-community.git", rev = "ad75112", optional = true }
+smart-leds = "0.4.0"
 
 [features]
-default = [ "esp32-s3-headless" ]
+#default = [ "esp32-s3-headless" ]
 #default = [ "esp32-s3-box" ]
+default = [ "esp32-c6-devkitc-1" ]
 #default = [ "waveshare-esp32-c6-lcd-1-47" ]
 
 psram = []
+neopixel = [ "esp-hal-smartled/esp32c6" ]
 
 esp32s3 = [ "esp-hal/esp32s3", "esp-wifi/esp32s3", "esp-println/esp32s3", "esp-backtrace/esp32s3", "esp-hal-embassy/esp32s3"]
 esp32c3 = [ "esp-hal/esp32c3", "esp-wifi/esp32c3", "esp-println/esp32c3", "esp-backtrace/esp32c3", "esp-hal-embassy/esp32c3"]
@@ -61,6 +67,7 @@ gui = [ "esp-bsp", "embedded-graphics", "esp-display-interface-spi-dma", "mipids
 
 esp32-s3-headless = [ "esp32s3", "esp-hal/octal-psram", "psram" ]
 esp32-s3-box = [ "esp32s3", "gui", "esp-bsp/esp32-s3-box", "esp-hal/octal-psram" ]
+esp32-c6-devkitc-1 = [ "esp32c6", "neopixel" ]
 waveshare-esp32-c6-lcd-1-47 = [ "esp32c6", "gui", "esp-bsp/waveshare-esp32-c6-lcd-1-47"]
 
 [profile.dev]
