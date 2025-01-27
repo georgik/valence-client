@@ -62,7 +62,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 // Define a static channel with a capacity of 1 for `HardwareEvent`s.
 static CHANNEL: Channel<CriticalSectionRawMutex, HardwareEvent, 1> = Channel::new();
-
+use core::sync::atomic::{AtomicBool, Ordering};
+static IS_BUSY: AtomicBool = AtomicBool::new(false);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -81,6 +82,8 @@ use core::fmt::Write as FmtWrite;
 use embassy_futures::yield_now;
 #[cfg(feature = "gui")]
 use embedded_graphics::{pixelcolor::Rgb565, prelude::Size, primitives::Rectangle};
+use esp_wifi::config::PowerSaveMode;
+use valence_protocol::decode::PacketFrame;
 
 const LOG_CAPACITY: usize = 1024; // Total characters for logging
 const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
@@ -341,6 +344,8 @@ async fn main(spawner: Spawner) {
 async fn connection(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.capabilities());
+    println!("Disabling PowerSaveMode to avoid delay when receiving data.");
+    controller.set_power_saving(PowerSaveMode::None).unwrap();
 
     loop {
         match esp_wifi::wifi::wifi_state() {
@@ -427,8 +432,15 @@ async fn send_handshake(
 #[embassy_executor::task]
 async fn tick_task() {
     loop {
-        println!("Tick...");
-        yield_now().await;
+        // Check the busy state and print it
+        let busy = IS_BUSY.load(Ordering::Relaxed);
+        if busy {
+            println!("Tick... BUSY processing packets");
+        } else {
+            println!("Tick... IDLE");
+        }
+
+        yield_now().await; // Yield to allow other tasks to run
         Timer::after(Duration::from_secs(1)).await;
     }
 }
@@ -475,33 +487,77 @@ async fn login_and_handle_updates(
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
     let sender = CHANNEL.sender();
+
+    // Step 1: Send login start packet
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
         username: valence_protocol::Bounded("ESP32-S3"), // Replace with your username
-        profile_id: None, // Optional in offline mode
+        profile_id: None,                               // Optional in offline mode
     };
 
     enc.append_packet(&login_start_packet).expect("Failed to encode LoginHelloC2s packet");
     let data = enc.take();
     println!("Login start packet: {:?}", data);
+
+    // Send login start packet
     socket.write_all(&data).await.map_err(|_| ())?;
     println!("Login request sent.");
 
+    // Allocate a buffer dynamically
     let mut buf = Vec::with_capacity(4096);
     buf.resize(4096, 0);
+
+    // Process packets from the server
     loop {
+        // Read data from the socket
         let bytes_read = socket.read(&mut buf).await.map_err(|_| ())?;
         if bytes_read == 0 {
             println!("Connection closed by server.");
             return Ok(());
         }
-        println!("Received {} bytes", bytes_read);
-        heap_stats();
-        // println!("Received data: {:?}", &buf[..bytes_read]);
 
+        println!("Received {} bytes", bytes_read);
         dec.queue_bytes((&buf[..bytes_read]).into());
-        while let Ok(Some(frame)) = dec.try_next_packet() {
-            println!("Received packet ID: 0x{:X}", frame.id);
-            match frame.id {
+
+        // Set the busy flag to true before processing
+        IS_BUSY.store(true, Ordering::Relaxed);
+
+        // Process packets sequentially
+        loop {
+            match dec.try_next_packet() {
+                Ok(Some(frame)) => {
+                    // Process the decoded packet
+                    process_packet(frame, dec, enc, socket, &sender).await?;
+                }
+                Ok(None) => {
+                    // No more packets to process; break the inner loop
+                    break;
+                }
+                Err(e) => {
+                    println!("Error decoding packet: {:?}", e);
+                    return Err(());
+                }
+            }
+
+            // Yield control after processing each packet to prevent monopolization
+            yield_now().await;
+        }
+
+        // Reset the busy flag after processing
+        IS_BUSY.store(false, Ordering::Relaxed);
+
+        // Yield control after processing the current batch of packets
+        yield_now().await;
+    }
+}
+
+async fn process_packet(
+                frame: PacketFrame,
+                dec: &mut PacketDecoder,
+                enc: &mut PacketEncoder,
+                socket: &mut TcpSocket<'_>,
+                sender: &embassy_sync::channel::Sender<'static, CriticalSectionRawMutex, HardwareEvent, 1>,
+            ) -> Result<(), ()> {
+                match frame.id {
                 LoginCompressionS2c::ID => {
                     println!("LoginCompressionS2c");
                     // let packet: LoginCompressionS2c = frame.decode().expect("Failed to decode LoginCompressionS2c");
@@ -680,8 +736,6 @@ async fn login_and_handle_updates(
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
             // heap_stats();
-            yield_now().await;
-        }
-        yield_now().await;
+            Ok(())
+
     }
-}
