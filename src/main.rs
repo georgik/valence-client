@@ -344,6 +344,8 @@ async fn main(spawner: Spawner) {
 async fn connection(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.capabilities());
+
+    // https://docs.esp-rs.org/esp-hal/esp-wifi/0.12.0/esp32c6/esp_wifi/#wifi-performance-considerations
     println!("Disabling PowerSaveMode to avoid delay when receiving data.");
     controller.set_power_saving(PowerSaveMode::None).unwrap();
 
