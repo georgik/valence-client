@@ -9,6 +9,9 @@ use esp_hal::spi::master::Spi;
 use esp_hal::timer::systimer::SystemTimer;
 use defmt_rtt as _;
 use heapless::String;
+use valence_protocol::block::PropName;
+use valence_protocol::block::PropValue;
+use valence_protocol::packets::play::BlockUpdateS2c;
 use core::net::Ipv4Addr;
 use defmt::info;
 use embedded_hal::delay::DelayNs;
@@ -46,9 +49,24 @@ use esp_wifi::{
 };
 use valence_protocol::{Bounded, Decode, Encode, Packet, PacketDecoder, PacketEncoder, VarInt};
 use valence_protocol::packets::login::{LoginHelloC2s, LoginSuccessS2c, LoginCompressionS2c};
-use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c};
+use valence_protocol::packets::play::{GameJoinS2c, KeepAliveS2c, KeepAliveC2s, PlayerPositionLookS2c, PlayerAbilitiesS2c, ChunkDataS2c, ChatMessageS2c, DisconnectS2c, EntityStatusS2c, PlayerListS2c, PlayerRespawnS2c, PlayerSpawnPositionS2c, CommandTreeS2c, UpdateSelectedSlotS2c, AdvancementUpdateS2c, HealthUpdateS2c, EntityAttributesS2c, SynchronizeTagsS2c, ScreenHandlerSlotUpdateS2c, ChatMessageC2s, GameMessageS2c, EntitySetHeadYawS2c, RotateS2c};
 use valence_protocol::packets::status::{QueryRequestC2s, QueryResponseS2c};
 
+use esp_hal::{rmt::Rmt, time::RateExtU32};
+use esp_hal_smartled::{smartLedBuffer, SmartLedsAdapter};
+
+use smart_leds::{brightness, gamma, hsv::{hsv2rgb, Hsv}, SmartLedsWrite, RGB8};
+
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::Channel;
+use esp_hal::rmt::TxChannel;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
+
+// Define a static channel with a capacity of 1 for `HardwareEvent`s.
+static CHANNEL: Channel<CriticalSectionRawMutex, HardwareEvent, 1> = Channel::new();
+use core::sync::atomic::{AtomicBool, Ordering};
+static IS_BUSY: AtomicBool = AtomicBool::new(false);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -64,8 +82,11 @@ const SERVER_IP: &str = env!("SERVER_IP");
 
 // Graphical logging
 use core::fmt::Write as FmtWrite;
+use embassy_futures::yield_now;
 #[cfg(feature = "gui")]
 use embedded_graphics::{pixelcolor::Rgb565, prelude::Size, primitives::Rectangle};
+use esp_wifi::config::PowerSaveMode;
+use valence_protocol::decode::PacketFrame;
 
 const LOG_CAPACITY: usize = 1024; // Total characters for logging
 const SCREEN_WIDTH: u32 = 320; // Adjust based on your display
@@ -174,7 +195,7 @@ async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
 
 
-    const memory_size: usize = 160 * 1024;
+    const memory_size: usize = 300 * 1024;
     print!("Initializing allocator with {} bytes...", memory_size);
     esp_alloc::heap_allocator!(memory_size);
     println!(" ok");
@@ -188,6 +209,18 @@ async fn main(spawner: Spawner) {
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
     );
 
+    let led_pin = peripherals.GPIO8;
+    let freq = 80.MHz();
+    let rmt = Rmt::new(peripherals.RMT, freq).unwrap();
+    let rmt_buffer = smartLedBuffer!(1);
+    let mut led = SmartLedsAdapter::new(rmt.channel0, led_pin, rmt_buffer);
+    // Set the RGB color (e.g., Red)
+    let color = RGB8 { r: 0, g: 0, b: 255 };
+
+    // Write color data to NeoPixel with gamma correction and brightness adjustment
+    led.write(brightness(gamma(core::iter::once(color)), 10))
+        .unwrap();
+
     #[cfg(feature = "gui")]
     let spi = lcd_spi!(peripherals);
 
@@ -197,8 +230,8 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "gui")]
     let di = lcd_display_interface!(peripherals, spi);
 
-    let mut delay = Delay::new();
-    delay.delay_ns(500_000u32);
+    // let mut delay = Delay::new();
+    // delay.delay_ns(500_000u32);
 
     #[cfg(feature = "gui")]
     let mut display = lcd_display!(peripherals, di).init(&mut delay).unwrap();
@@ -246,6 +279,10 @@ async fn main(spawner: Spawner) {
         mk_static!(StackResources<3>, StackResources::<3>::new()),
         seed,
     );
+
+    spawner
+        .spawn(hardware_task_runner(led, CHANNEL.receiver()))
+        .unwrap();
 
     spawner.spawn(connection(controller)).ok();
     spawner.spawn(net_task(runner)).ok();
@@ -310,6 +347,10 @@ async fn main(spawner: Spawner) {
 async fn connection(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.capabilities());
+
+    // https://docs.esp-rs.org/esp-hal/esp-wifi/0.12.0/esp32c6/esp_wifi/#wifi-performance-considerations
+    println!("Disabling PowerSaveMode to avoid delay when receiving data.");
+    controller.set_power_saving(PowerSaveMode::None).unwrap();
 
     loop {
         match esp_wifi::wifi::wifi_state() {
@@ -396,42 +437,151 @@ async fn send_handshake(
 #[embassy_executor::task]
 async fn tick_task() {
     loop {
-        println!("Tick...");
-        // heap_stats();
+        // Check the busy state and print it
+        let busy = IS_BUSY.load(Ordering::Relaxed);
+        if busy {
+            println!("Tick... BUSY processing packets");
+        } else {
+            println!("Tick... IDLE");
+        }
+
+        yield_now().await; // Yield to allow other tasks to run
         Timer::after(Duration::from_secs(1)).await;
     }
 }
+
+#[derive(Debug)]
+enum HardwareEvent {
+    ToggleLed,
+    TurnOnLed,
+    TurnOffLed
+    // Future events can be added here (e.g., ButtonPressed, DisplayUpdate, etc.)
+}
+
+
+#[embassy_executor::task]
+async fn hardware_task_runner(
+    mut led: SmartLedsAdapter<esp_hal::rmt::Channel<esp_hal::Blocking, 0>, 25>,
+    receiver: embassy_sync::channel::Receiver<'static, CriticalSectionRawMutex, HardwareEvent, 1>,
+) {
+    let mut toggle_state: u8 = 0;
+
+    loop {
+        let event = receiver.receive().await;
+
+        match event {
+            HardwareEvent::ToggleLed => {
+                println!("Toggle led");
+                toggle_state = (toggle_state + 1) % 3;
+                let color = match toggle_state {
+                    0 => RGB8 { r: 255, g: 0, b: 0 }, // Red
+                    1 => RGB8 { r: 0, g: 255, b: 0 }, // Green
+                    _ => RGB8 { r: 0, g: 0, b: 0 },   // Off
+                };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+            HardwareEvent::TurnOffLed => {
+                println!("Turn off led");
+                toggle_state = 0;
+                let color = RGB8 { r: 0, g: 0, b: 0 };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+            HardwareEvent::TurnOnLed => {
+                println!("Turn on led");
+                toggle_state = 0;
+                let color = RGB8 { r: 255, g: 255, b: 0 };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+
+        }
+        yield_now().await;
+    }
+}
+
 
 async fn login_and_handle_updates(
     socket: &mut TcpSocket<'_>,
     dec: &mut PacketDecoder,
     enc: &mut PacketEncoder,
 ) -> Result<(), ()> {
+    let sender = CHANNEL.sender();
+
+    // Step 1: Send login start packet
     let login_start_packet = valence_protocol::packets::login::login_hello_c2s::LoginHelloC2s {
         username: valence_protocol::Bounded("ESP32-S3"), // Replace with your username
-        profile_id: None, // Optional in offline mode
+        profile_id: None,                               // Optional in offline mode
     };
 
     enc.append_packet(&login_start_packet).expect("Failed to encode LoginHelloC2s packet");
     let data = enc.take();
     println!("Login start packet: {:?}", data);
+
+    // Send login start packet
     socket.write_all(&data).await.map_err(|_| ())?;
     println!("Login request sent.");
 
-    let mut buf = [0u8; 4096];
+    // Allocate a buffer dynamically
+    let mut buf = Vec::with_capacity(4096);
+    buf.resize(4096, 0);
+
+    // Process packets from the server
     loop {
+        // Read data from the socket
         let bytes_read = socket.read(&mut buf).await.map_err(|_| ())?;
         if bytes_read == 0 {
             println!("Connection closed by server.");
             return Ok(());
         }
-        println!("Received {} bytes", bytes_read);
-        // println!("Received data: {:?}", &buf[..bytes_read]);
 
+        println!("Received {} bytes", bytes_read);
         dec.queue_bytes((&buf[..bytes_read]).into());
-        while let Ok(Some(frame)) = dec.try_next_packet() {
-            println!("Received packet ID: 0x{:X}", frame.id);
-            match frame.id {
+
+        // Set the busy flag to true before processing
+        IS_BUSY.store(true, Ordering::Relaxed);
+
+        // Process packets sequentially
+        loop {
+            match dec.try_next_packet() {
+                Ok(Some(frame)) => {
+                    // Process the decoded packet
+                    process_packet(frame, dec, enc, socket, &sender).await?;
+                }
+                Ok(None) => {
+                    // No more packets to process; break the inner loop
+                    break;
+                }
+                Err(e) => {
+                    println!("Error decoding packet: {:?}", e);
+                    return Err(());
+                }
+            }
+
+            // Yield control after processing each packet to prevent monopolization
+            yield_now().await;
+        }
+
+        // Reset the busy flag after processing
+        IS_BUSY.store(false, Ordering::Relaxed);
+
+        // Yield control after processing the current batch of packets
+        yield_now().await;
+    }
+}
+
+async fn process_packet(
+                frame: PacketFrame,
+                dec: &mut PacketDecoder,
+                enc: &mut PacketEncoder,
+                socket: &mut TcpSocket<'_>,
+                sender: &embassy_sync::channel::Sender<'static, CriticalSectionRawMutex, HardwareEvent, 1>,
+            ) -> Result<(), ()> {
+                match frame.id {
                 LoginCompressionS2c::ID => {
                     println!("LoginCompressionS2c");
                     // let packet: LoginCompressionS2c = frame.decode().expect("Failed to decode LoginCompressionS2c");
@@ -445,6 +595,8 @@ async fn login_and_handle_updates(
                 }
 
                 LoginSuccessS2c::ID => {
+                    heap_stats();
+                    sender.try_send(HardwareEvent::ToggleLed).unwrap();
                     let packet: LoginSuccessS2c =
                         frame.decode().expect("Failed to decode LoginSuccessS2c");
                     println!(
@@ -491,6 +643,7 @@ async fn login_and_handle_updates(
                             return Err(()); // Handle error
                         }
                     }
+                    socket.flush().await.unwrap();
                 }
                 ChatMessageS2c::ID => {
                     let packet: ChatMessageS2c =
@@ -524,6 +677,7 @@ async fn login_and_handle_updates(
                     println!("PlayerSpawnPositionS2c");
                 }
                 PlayerAbilitiesS2c::ID => {
+                    heap_stats();
                     let packet: PlayerAbilitiesS2c =
                         frame.decode().expect("Failed to decode PlayerAbilitiesS2c");
                     println!("Player abilities: {:?}", packet.flags);
@@ -594,14 +748,44 @@ async fn login_and_handle_updates(
                                 println!("Failed to send chat message. Error: {:?}", e);
                             }
                         }
+                        socket.flush().await.unwrap();
                     }
-
                 }
+                EntitySetHeadYawS2c::ID => {
+                    println!("EntitySetHeadYawS2c");
+                }
+                RotateS2c::ID => {
+                    println!("RotateS2c");
+                }
+                BlockUpdateS2c::ID => {
+                    println!("BlockUpdateS2c");
+
+                    // Attempt to decode the packet
+                    let packet: BlockUpdateS2c = match frame.decode() {
+                        Ok(decoded_packet) => decoded_packet,
+                        Err(err) => {
+                            println!("Failed to decode BlockUpdateS2c: {:?}", err);
+                            return Err(()); // Skip further processing for this packet
+                        }
+                    };
+
+                    // Safely get the "Lit" property and handle potential absence
+                    if let Some(PropValue::True) = packet.block_id.get(PropName::Lit) {
+                        println!("Block is lit, turning on LED.");
+                        if let Err(err) = sender.try_send(HardwareEvent::TurnOnLed) {
+                            println!("Failed to send TurnOnLed event: {:?}", err);
+                        }
+                    } else {
+                        println!("Block is not lit, turning off LED.");
+                        if let Err(err) = sender.try_send(HardwareEvent::TurnOffLed) {
+                            println!("Failed to send TurnOffLed event: {:?}", err);
+                        }
+                    }
+                }
+
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
             // heap_stats();
-            Timer::after(Duration::from_millis(10)).await;
-        }
-        Timer::after(Duration::from_millis(10)).await;
+            Ok(())
+
     }
-}
