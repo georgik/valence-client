@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-valence_protocol = { path = "../valence/crates/valence_protocol", features = ["compression"] }
-#valence_protocol = { git = "https://github.com/georgik/valence.git", rev = "75825ccd1d3eb971062575d701004ac0d986b67a", features = ["compression"] }
+#valence_protocol = { path = "../valence/crates/valence_protocol", features = ["compression"] }
+valence_protocol = { git = "https://github.com/georgik/valence.git", rev = "e2cc4985b6c75019db59d362449579f6149c984f", features = ["compression"] }
 
 esp-backtrace = { version = "0.15.0", features = [
     "exception-handler",
