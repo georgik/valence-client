@@ -9,6 +9,8 @@ use esp_hal::spi::master::Spi;
 use esp_hal::timer::systimer::SystemTimer;
 use defmt_rtt as _;
 use heapless::String;
+use valence_protocol::block::PropName;
+use valence_protocol::block::PropValue;
 use valence_protocol::packets::play::BlockUpdateS2c;
 use core::net::Ipv4Addr;
 use defmt::info;
@@ -451,6 +453,8 @@ async fn tick_task() {
 #[derive(Debug)]
 enum HardwareEvent {
     ToggleLed,
+    TurnOnLed,
+    TurnOffLed
     // Future events can be added here (e.g., ButtonPressed, DisplayUpdate, etc.)
 }
 
@@ -478,6 +482,23 @@ async fn hardware_task_runner(
                 led.write(brightness(gamma(core::iter::once(color)), 10))
                     .unwrap();
             }
+            HardwareEvent::TurnOffLed => {
+                println!("Turn off led");
+                toggle_state = 0;
+                let color = RGB8 { r: 0, g: 0, b: 0 };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+            HardwareEvent::TurnOnLed => {
+                println!("Turn on led");
+                toggle_state = 0;
+                let color = RGB8 { r: 255, g: 255, b: 0 };
+
+                led.write(brightness(gamma(core::iter::once(color)), 10))
+                    .unwrap();
+            }
+
         }
         yield_now().await;
     }
@@ -738,9 +759,30 @@ async fn process_packet(
                 }
                 BlockUpdateS2c::ID => {
                     println!("BlockUpdateS2c");
-                    let packet: BlockUpdateS2c = frame.decode().expect("Failed to decode BlockUpdateS2c");
-                    println!("block_id: {:?}",packet.block_id);
+
+                    // Attempt to decode the packet
+                    let packet: BlockUpdateS2c = match frame.decode() {
+                        Ok(decoded_packet) => decoded_packet,
+                        Err(err) => {
+                            println!("Failed to decode BlockUpdateS2c: {:?}", err);
+                            return Err(()); // Skip further processing for this packet
+                        }
+                    };
+
+                    // Safely get the "Lit" property and handle potential absence
+                    if let Some(PropValue::True) = packet.block_id.get(PropName::Lit) {
+                        println!("Block is lit, turning on LED.");
+                        if let Err(err) = sender.try_send(HardwareEvent::TurnOnLed) {
+                            println!("Failed to send TurnOnLed event: {:?}", err);
+                        }
+                    } else {
+                        println!("Block is not lit, turning off LED.");
+                        if let Err(err) = sender.try_send(HardwareEvent::TurnOffLed) {
+                            println!("Failed to send TurnOffLed event: {:?}", err);
+                        }
+                    }
                 }
+
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
             // heap_stats();
