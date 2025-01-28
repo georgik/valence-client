@@ -9,6 +9,7 @@ use esp_hal::spi::master::Spi;
 use esp_hal::timer::systimer::SystemTimer;
 use defmt_rtt as _;
 use heapless::String;
+use valence_protocol::packets::play::BlockUpdateS2c;
 use core::net::Ipv4Addr;
 use defmt::info;
 use embedded_hal::delay::DelayNs;
@@ -734,6 +735,11 @@ async fn process_packet(
                 }
                 RotateS2c::ID => {
                     println!("RotateS2c");
+                }
+                BlockUpdateS2c::ID => {
+                    println!("BlockUpdateS2c");
+                    let packet: BlockUpdateS2c = frame.decode().expect("Failed to decode BlockUpdateS2c");
+                    println!("block_id: {:?}",packet.block_id);
                 }
                 _ => println!("Unhandled packet ID: 0x{:X}", frame.id),
             }
